@@ -1,18 +1,20 @@
 """
-Lesson 2: First Q-Learning Project — Maze Solver
-A small maze solved with tabular Q-Learning (stdlib only).
+Lesson 4: Improving Q-Learning — Maze Solver
+Epsilon decay, reward tracking, and Matplotlib visualization.
 """
 
 import random
 import sys
 
+import matplotlib.pyplot as plt
+
 # Windows terminals often default to cp1252; allow ↑↓←→ to print.
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-# ------------------------------------------------------------
-# 1. Maze setup
-# ------------------------------------------------------------
+# =====================================
+# 1. MAZE SETUP (same 5×5 environment)
+# =====================================
 ROWS = 5
 COLS = 5
 
@@ -28,17 +30,29 @@ ACTIONS = {
     3: (0, 1),
 }
 
-# ------------------------------------------------------------
-# 2. Hyperparameters
-# ------------------------------------------------------------
-EPISODES = 1000
-ALPHA = 0.1       # learning rate
-GAMMA = 0.9       # discount factor
-EPSILON = 0.2     # exploration rate
+ARROWS = {
+    0: "↑",
+    1: "↓",
+    2: "←",
+    3: "→",
+}
 
-# ------------------------------------------------------------
-# 3. Q-table: state -> [Q(up), Q(down), Q(left), Q(right)]
-# ------------------------------------------------------------
+# =====================================
+# 2. HYPERPARAMETERS
+# =====================================
+episodes = 1000
+max_steps = 100
+alpha = 0.1       # learning rate
+gamma = 0.9       # discount factor
+
+# Epsilon decay schedule
+epsilon = 1.0
+epsilon_min = 0.05
+epsilon_decay = 0.995
+
+# =====================================
+# 3. Q-TABLE
+# =====================================
 q_table = {
     (r, c): [0.0, 0.0, 0.0, 0.0]
     for r in range(ROWS)
@@ -58,59 +72,112 @@ def take_action(state, action):
     next_state = (state[0] + dr, state[1] + dc)
 
     if not is_valid(next_state):
-        # Hit wall or boundary — stay put, small penalty
-        return state, -1, False
+        # Hit wall or boundary
+        return state, -2, False
 
     if next_state == GOAL:
         return next_state, 10, True
 
-    # Small step cost encourages shorter paths
-    return next_state, -0.1, False
+    # Normal movement
+    return next_state, -1, False
 
 
-def choose_action(state):
+def choose_action(state, epsilon):
     """Epsilon-greedy action selection."""
-    if random.random() < EPSILON:
+    if random.random() < epsilon:
         return random.randint(0, 3)
-    return max(range(4), key=lambda a: q_table[state][a])
+
+    values = q_table[state]
+    best_value = max(values)
+    best_actions = [
+        a for a, value in enumerate(values)
+        if value == best_value
+    ]
+    return random.choice(best_actions)
 
 
-# ------------------------------------------------------------
-# 4. Training
-# ------------------------------------------------------------
-print(f"Training for {EPISODES} episodes...")
+# =====================================
+# 4. TRAINING
+# =====================================
+episode_rewards = []
+epsilon_history = []
 
-for episode in range(EPISODES):
+print(f"Training for {episodes} episodes...\n")
+
+for episode in range(episodes):
     state = START
+    total_reward = 0
 
-    for _ in range(100):  # max steps per episode
-        action = choose_action(state)
+    for _ in range(max_steps):
+        action = choose_action(state, epsilon)
         next_state, reward, done = take_action(state, action)
 
         # Q-learning update
         old_q = q_table[state][action]
         next_max = max(q_table[next_state]) if next_state in q_table else 0.0
-        q_table[state][action] = old_q + ALPHA * (reward + GAMMA * next_max - old_q)
+        q_table[state][action] = old_q + alpha * (
+            reward + gamma * next_max - old_q
+        )
 
+        total_reward += reward
         state = next_state
+
         if done:
             break
 
-    if (episode + 1) % 200 == 0:
-        print(f"  Episode {episode + 1}/{EPISODES} complete")
+    episode_rewards.append(total_reward)
+    epsilon_history.append(epsilon)
 
-print("Training finished.\n")
+    # Decay epsilon after each episode
+    epsilon = max(epsilon_min, epsilon * epsilon_decay)
 
-# ------------------------------------------------------------
-# 5. Print learned maze policy
-# ------------------------------------------------------------
-arrows = {
-    0: "↑",
-    1: "↓",
-    2: "←",
-    3: "→",
-}
+    if (episode + 1) % 100 == 0:
+        print(
+            f"Episode {episode + 1}/{episodes} | "
+            f"Reward: {total_reward} | "
+            f"Epsilon: {epsilon:.3f}"
+        )
 
+print("\nTraining finished!")
+
+# =====================================
+# 5. MATPLOTLIB VISUALIZATION
+# =====================================
+window = 50
+moving_avg = []
+for i in range(len(episode_rewards)):
+    start = max(0, i - window + 1)
+    moving_avg.append(
+        sum(episode_rewards[start:i + 1]) / (i - start + 1)
+    )
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+# Episode rewards
+axes[0].plot(episode_rewards, alpha=0.35, label="Episode reward")
+axes[0].plot(moving_avg, linewidth=2, label=f"{window}-episode moving avg")
+axes[0].set_title("Episode Rewards")
+axes[0].set_xlabel("Episode")
+axes[0].set_ylabel("Total reward")
+axes[0].legend()
+axes[0].grid(True, alpha=0.3)
+
+# Epsilon decay
+axes[1].plot(epsilon_history, color="orange")
+axes[1].set_title("Epsilon Decay")
+axes[1].set_xlabel("Episode")
+axes[1].set_ylabel("Epsilon")
+axes[1].set_ylim(0, 1.05)
+axes[1].grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig("q_learning_results.png", dpi=150)
+print("\nSaved graph: q_learning_results.png")
+plt.close()
+
+# =====================================
+# 6. LEARNED POLICY
+# =====================================
 print("\nLearned Maze Policy:\n")
 for row in range(ROWS):
     line = []
@@ -127,25 +194,31 @@ for row in range(ROWS):
                 range(4),
                 key=lambda a: q_table[state][a],
             )
-            line.append(f" {arrows[best_action]} ")
+            line.append(f" {ARROWS[best_action]} ")
     print(" ".join(line))
 
-# ------------------------------------------------------------
-# 6. Test the trained agent
-# ------------------------------------------------------------
+# =====================================
+# 7. TEST TRAINED AGENT
+# =====================================
 print("\nTesting trained agent:")
 state = START
 path = [state]
 
-for _ in range(30):
+for step in range(max_steps):
     if state == GOAL:
         break
-    action = max(
-        range(4),
-        key=lambda a: q_table[state][a],
-    )
+
+    values = q_table[state]
+    best_value = max(values)
+    best_actions = [
+        a for a, value in enumerate(values)
+        if value == best_value
+    ]
+    action = random.choice(best_actions)
+
     state, reward, done = take_action(state, action)
     path.append(state)
+
     if done:
         break
 
